@@ -1,0 +1,51 @@
+<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Prendre rendez-vous</title><link rel="stylesheet" href="/style.css"></head><body>
+<div class="wrap">
+  <h1 id="title">Prendre rendez-vous</h1><p class="mute" id="intro"></p>
+  <div id="err" class="msg err hide"></div>
+  <div id="list"></div>
+  <form id="form" class="card hide">
+    <h2 style="margin-top:0">Votre demande</h2>
+    <p id="chosen" style="font-weight:600"></p>
+    <label>Mode du rendez-vous</label><div class="modes" id="modes"></div>
+    <label for="name">Nom et prénom *</label><input id="name" required autocomplete="name">
+    <label for="email">E-mail *</label><input id="email" type="email" required autocomplete="email">
+    <label for="phone">Téléphone</label><input id="phone" type="tel" autocomplete="tel">
+    <label for="note">Message (facultatif)</label><textarea id="note" placeholder="Sujet du rendez-vous…"></textarea>
+    <div class="row" style="margin-top:16px"><button type="button" id="cancel">Annuler</button><button class="primary" id="send">Envoyer ma demande</button></div>
+  </form>
+</div>
+<script type="module">
+import { $, esc, api, MODE, fmtDay, fmtTime, fmtFull, dayKey } from '/common.js';
+let slots = [], chosen = null;
+const err = (m) => { const e = $('#err'); e.textContent = m || ''; e.classList.toggle('hide', !m); if (m) e.scrollIntoView({ block: 'nearest' }); };
+async function load() {
+  const d = await api('/api/public');
+  document.title = d.settings.title; $('#title').textContent = d.settings.title + (d.settings.owner ? ' — ' + d.settings.owner : '');
+  $('#intro').textContent = d.settings.intro; slots = d.slots; render();
+}
+function render() {
+  if (!slots.length) { $('#list').innerHTML = '<div class="card mute">Aucun créneau disponible pour le moment. Revenez bientôt.</div>'; return; }
+  const days = {}; slots.forEach((s) => (days[dayKey(s.start)] ||= []).push(s));
+  $('#list').innerHTML = Object.values(days).map((ss) => `<div class="day">${esc(fmtDay(ss[0].start))}</div><div class="slots">${ss.map((s) =>
+    `<button class="slot ${chosen?.id === s.id ? 'sel' : ''}" data-id="${s.id}">${fmtTime(s.start)} – ${fmtTime(s.end)}</button>`).join('')}</div>`).join('');
+}
+$('#list').addEventListener('click', (e) => {
+  const b = e.target.closest('.slot'); if (!b) return;
+  chosen = slots.find((s) => s.id === b.dataset.id); err('');
+  $('#chosen').textContent = '🗓 ' + fmtFull(chosen.start);
+  $('#modes').innerHTML = chosen.modes.map((m, i) => `<label><input type="radio" name="mode" value="${m}" ${i ? '' : 'checked'}> ${MODE[m]}</label>`).join('');
+  $('#form').classList.remove('hide'); render(); $('#form').scrollIntoView({ behavior: 'smooth' });
+});
+$('#cancel').onclick = () => { chosen = null; $('#form').classList.add('hide'); render(); };
+$('#form').addEventListener('submit', async (e) => {
+  e.preventDefault(); err(''); $('#send').disabled = true;
+  try {
+    const { token } = await api('/api/book', { method: 'POST', body: { slotId: chosen.id, mode: document.querySelector('[name=mode]:checked')?.value,
+      name: $('#name').value, email: $('#email').value, phone: $('#phone').value, note: $('#note').value } });
+    try { localStorage.setItem('rdv:last', token); } catch {}
+    location.href = '/reservation?t=' + token;
+  } catch (x) { err(x.message); $('#send').disabled = false; if (x.status === 409 || x.status === 404) { chosen = null; $('#form').classList.add('hide'); load(); } }
+});
+load().catch(() => err('Impossible de charger les créneaux.'));
+</script></body></html>

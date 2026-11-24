@@ -1,0 +1,8 @@
+{
+  "name": "calendrier-rdv",
+  "version": "1.0.0",
+  "description": "Prise de rendez-vous : le professionnel ouvre des créneaux, le client choisit, le professionnel valide.",
+  "type": "module",
+  "scripts": { "start": "node server.js", "test": "node test.js" },
+  "engines": { "node": ">=18" }
+}

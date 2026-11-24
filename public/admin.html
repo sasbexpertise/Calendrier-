@@ -1,0 +1,124 @@
+<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Administration — Rendez-vous</title><link rel="stylesheet" href="/style.css"></head><body>
+<div class="wrap wide">
+<div id="login" class="card hide" style="max-width:380px;margin:60px auto">
+  <h1>Espace administrateur</h1><form id="lf"><label for="pw">Mot de passe</label><input id="pw" type="password" autofocus>
+  <div id="lerr" class="msg err hide"></div><p><button class="primary">Se connecter</button></p></form></div>
+
+<div id="app" class="hide">
+  <div class="row"><h1>Mes rendez-vous</h1><button id="out">Déconnexion</button></div>
+  <div class="card row"><div><b>Lien à envoyer à vos clients</b><br><code id="share"></code></div><button id="copy">Copier le lien</button></div>
+  <div class="tabs" id="tabs"><button data-t="req" class="on">Demandes <span id="nreq" class="badge b-pending hide"></span></button><button data-t="ok">Confirmés</button><button data-t="slots">Créneaux</button><button data-t="set">Réglages</button></div>
+  <div id="msg" class="msg good hide"></div>
+
+  <section id="t-req"></section>
+  <section id="t-ok" class="hide"></section>
+  <section id="t-slots" class="hide">
+    <form id="gen" class="card">
+      <h2 style="margin-top:0">Ouvrir des créneaux</h2>
+      <div class="grid">
+        <div><label>Du</label><input type="date" id="g-from" required></div>
+        <div><label>Au</label><input type="date" id="g-to" required></div>
+        <div><label>Début de journée</label><input type="time" id="g-start" value="09:00" required></div>
+        <div><label>Fin de journée</label><input type="time" id="g-end" value="17:00" required></div>
+        <div><label>Durée (min)</label><input type="number" id="g-dur" value="30" min="10" step="5" required></div>
+        <div><label>Pause entre RDV (min)</label><input type="number" id="g-gap" value="0" min="0" step="5"></div>
+        <div><label>Pause déjeuner de</label><input type="time" id="g-ls" value="12:00"></div>
+        <div><label>à</label><input type="time" id="g-le" value="14:00"></div>
+      </div>
+      <label>Jours</label><div id="g-days"></div>
+      <label>Modes proposés</label><div id="g-modes"></div>
+      <p class="mute" id="g-prev"></p>
+      <button class="primary">Ouvrir ces créneaux</button>
+    </form>
+    <div id="slotlist"></div>
+  </section>
+  <section id="t-set" class="hide">
+    <form id="sf" class="card">
+      <label>Titre de la page</label><input id="s-title"><label>Votre nom</label><input id="s-owner">
+      <label>Texte d’accueil</label><textarea id="s-intro"></textarea>
+      <label>Lien de visio (Google Meet, Zoom…)</label><input id="s-visio" placeholder="https://meet.google.com/…">
+      <label>Lien Microsoft Teams</label><input id="s-teams" placeholder="https://teams.microsoft.com/l/meetup-join/…">
+      <label>Adresse (présentiel)</label><input id="s-addr" placeholder="12 rue … 75000 Paris">
+      <p><button class="primary">Enregistrer</button></p>
+    </form>
+  </section>
+</div></div>
+<script type="module">
+import { $, esc, api, MODE, fmtDay, fmtTime, fmtFull, dayKey } from '/common.js';
+let st = null;
+const DAYS = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'];
+const toast = (m) => { const e = $('#msg'); e.textContent = m; e.classList.remove('hide'); setTimeout(() => e.classList.add('hide'), 3500); };
+const guard = (fn) => async (...a) => { try { await fn(...a); } catch (e) { if (e.status === 401) return showLogin(); alert(e.message); } };
+
+function showLogin() { $('#app').classList.add('hide'); $('#login').classList.remove('hide'); }
+async function refresh() { st = await api('/api/admin/state'); $('#login').classList.add('hide'); $('#app').classList.remove('hide'); render(); }
+$('#lf').addEventListener('submit', async (e) => { e.preventDefault(); try { await api('/api/admin/login', { method: 'POST', body: { password: $('#pw').value } }); $('#pw').value = ''; await refresh(); } catch (x) { $('#lerr').textContent = x.message; $('#lerr').classList.remove('hide'); } });
+$('#out').onclick = async () => { await api('/api/admin/logout', { method: 'POST' }); showLogin(); };
+$('#copy').onclick = () => navigator.clipboard.writeText(location.origin + '/').then(() => toast('Lien copié ✔'));
+$('#share').textContent = location.origin + '/';
+$('#tabs').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; document.querySelectorAll('#tabs button').forEach((x) => x.classList.toggle('on', x === b));
+  ['req', 'ok', 'slots', 'set'].forEach((k) => $('#t-' + k).classList.toggle('hide', k !== b.dataset.t)); });
+
+const upcoming = (s) => new Date(s.end) > Date.now();
+function render() {
+  const pend = st.slots.filter((s) => s.status === 'pending');
+  $('#nreq').textContent = pend.length; $('#nreq').classList.toggle('hide', !pend.length);
+  $('#t-req').innerHTML = pend.length ? pend.map((s) => `<div class="card" data-id="${s.id}">
+    <div class="row"><b>🗓 ${esc(fmtFull(s.start))} – ${fmtTime(s.end)}</b><span class="badge b-pending">À valider</span></div>
+    <p><b>${esc(s.booking.name)}</b> · <a href="mailto:${esc(s.booking.email)}">${esc(s.booking.email)}</a>${s.booking.phone ? ' · ' + esc(s.booking.phone) : ''}</p>
+    ${s.booking.note ? `<p class="mute">« ${esc(s.booking.note)} »</p>` : ''}
+    <div class="grid"><div><label>Mode</label><select class="mode">${['visio', 'teams', 'presentiel'].map((m) => `<option value="${m}" ${m === s.booking.mode ? 'selected' : ''}>${MODE[m]}${m === s.booking.mode ? ' (choix du client)' : ''}</option>`).join('')}</select></div>
+    <div><label>Message au client (facultatif)</label><input class="message" placeholder="Ex : à très vite !"></div></div>
+    <p class="row" style="justify-content:flex-start"><button class="ok" data-a="accept">✔ Accepter</button><button class="danger" data-a="refuse">✖ Refuser</button></p></div>`).join('')
+    : '<p class="mute">Aucune demande en attente.</p>';
+  const ok = st.slots.filter((s) => s.status === 'confirmed' && upcoming(s));
+  $('#t-ok').innerHTML = ok.length ? ok.map((s) => `<div class="card row"><div><b>${esc(fmtFull(s.start))}</b> · ${MODE[s.booking.mode]}<br>${esc(s.booking.name)} · ${esc(s.booking.email)}${s.booking.phone ? ' · ' + esc(s.booking.phone) : ''}</div>
+    <button class="danger" data-reopen="${s.id}">Annuler / rouvrir</button></div>`).join('') : '<p class="mute">Aucun rendez-vous confirmé à venir.</p>';
+  const days = {}; st.slots.filter(upcoming).forEach((s) => (days[dayKey(s.start)] ||= []).push(s));
+  $('#slotlist').innerHTML = '<h2>Créneaux ouverts</h2>' + (Object.values(days).map((ss) => `<div class="day">${esc(fmtDay(ss[0].start))}</div><div class="slots">${ss.map((s) =>
+    `<span class="card" style="margin:0;padding:6px 10px">${fmtTime(s.start)} <span class="badge b-${s.status}">${{ open: 'libre', pending: 'demandé', confirmed: 'confirmé' }[s.status]}</span> ${s.status === 'open' ? `<button data-del="${s.id}" title="Supprimer" style="padding:0 6px">✕</button>` : ''}</span>`).join('')}</div>`).join('') || '<p class="mute">Aucun créneau. Utilisez le formulaire ci-dessus.</p>');
+  const S = st.settings; $('#s-title').value = S.title; $('#s-owner').value = S.owner; $('#s-intro').value = S.intro; $('#s-visio').value = S.visioLink; $('#s-teams').value = S.teamsLink; $('#s-addr').value = S.address;
+}
+$('#t-req').addEventListener('click', guard(async (e) => { const b = e.target.closest('[data-a]'); if (!b) return; const c = b.closest('.card');
+  if (b.dataset.a === 'refuse' && !confirm('Refuser cette demande ? Le créneau redeviendra libre.')) return;
+  await api(`/api/admin/slots/${c.dataset.id}/decide`, { method: 'POST', body: { action: b.dataset.a, mode: c.querySelector('.mode').value, message: c.querySelector('.message').value } });
+  toast(b.dataset.a === 'accept' ? 'Rendez-vous confirmé ✔' : 'Demande refusée'); await refresh(); }));
+$('#t-ok').addEventListener('click', guard(async (e) => { const b = e.target.closest('[data-reopen]'); if (!b || !confirm('Annuler ce rendez-vous ? Le créneau sera supprimé.')) return;
+  await api('/api/admin/slots/' + b.dataset.reopen, { method: 'DELETE' }); await refresh(); }));
+$('#slotlist').addEventListener('click', guard(async (e) => { const b = e.target.closest('[data-del]'); if (!b) return; await api('/api/admin/slots/' + b.dataset.del, { method: 'DELETE' }); await refresh(); }));
+$('#sf').addEventListener('submit', guard(async (e) => { e.preventDefault();
+  await api('/api/admin/settings', { method: 'PUT', body: { title: $('#s-title').value, owner: $('#s-owner').value, intro: $('#s-intro').value, visioLink: $('#s-visio').value, teamsLink: $('#s-teams').value, address: $('#s-addr').value } }); toast('Réglages enregistrés ✔'); await refresh(); }));
+
+// --- Générateur de créneaux ---
+$('#g-days').innerHTML = [1, 2, 3, 4, 5, 6, 0].map((d) => `<label class="chk"><input type="checkbox" value="${d}" ${d >= 1 && d <= 5 ? 'checked' : ''}> ${DAYS[d]}</label>`).join('');
+$('#g-modes').innerHTML = Object.entries(MODE).map(([k, v]) => `<label class="chk"><input type="checkbox" name="gm" value="${k}" checked> ${v}</label>`).join('');
+const iso = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+const today = new Date(); $('#g-from').value = iso(today); $('#g-to').value = iso(new Date(today.getTime() + 20 * 864e5));
+const mins = (v) => { const [h, m] = v.split(':').map(Number); return h * 60 + m; };
+function generate() {
+  const days = [...document.querySelectorAll('#g-days input:checked')].map((x) => +x.value);
+  const dur = +$('#g-dur').value, gap = +$('#g-gap').value || 0, a = mins($('#g-start').value), z = mins($('#g-end').value);
+  const ls = $('#g-ls').value ? mins($('#g-ls').value) : 0, le = $('#g-le').value ? mins($('#g-le').value) : 0;
+  const out = []; if (!dur || dur < 5) return out;
+  for (let d = new Date($('#g-from').value + 'T00:00'); d <= new Date($('#g-to').value + 'T00:00'); d.setDate(d.getDate() + 1)) {
+    if (!days.includes(d.getDay())) continue;
+    for (let t = a; t + dur <= z; t += dur + gap) {
+      if (ls < le && t < le && t + dur > ls) continue; // chevauche la pause déjeuner
+      const s = new Date(d); s.setHours(0, t, 0, 0); const e = new Date(s.getTime() + dur * 60000);
+      if (s > Date.now()) out.push({ start: s.toISOString(), end: e.toISOString() });
+    }
+  }
+  return out;
+}
+const prev = () => { const n = generate().length; $('#g-prev').textContent = n > 500 ? 'Trop de créneaux (max 500) : réduisez la période.' : `${n} créneau${n > 1 ? 'x' : ''} seront créés.`; };
+$('#gen').addEventListener('input', prev); prev();
+$('#gen').addEventListener('submit', guard(async (e) => { e.preventDefault();
+  const slots = generate(), modes = [...document.querySelectorAll('[name=gm]:checked')].map((x) => x.value);
+  if (!modes.length) return alert('Choisissez au moins un mode.'); if (!slots.length || slots.length > 500) return alert('Aucun créneau à créer (ou plus de 500).');
+  const r = await api('/api/admin/slots', { method: 'POST', body: { slots, modes } });
+  toast(`${r.added} créneau(x) ouvert(s)` + (r.skipped ? ` · ${r.skipped} ignoré(s) (déjà existants)` : '')); await refresh(); }));
+
+refresh().catch(() => showLogin());
+setInterval(() => { if (!$('#app').classList.contains('hide')) refresh().catch(() => {}); }, 30000);
+</script></body></html>

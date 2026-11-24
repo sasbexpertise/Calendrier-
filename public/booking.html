@@ -1,0 +1,23 @@
+<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Votre rendez-vous</title><link rel="stylesheet" href="/style.css"></head><body>
+<div class="wrap"><h1>Votre rendez-vous</h1><div id="box" class="card">Chargement…</div><p><a href="/">← Retour aux créneaux</a></p></div>
+<script type="module">
+import { $, esc, api, MODE, fmtFull } from '/common.js';
+const t = new URLSearchParams(location.search).get('t');
+const link = (u) => /^https?:\/\//i.test(u) ? `<a class="btn primary" href="${esc(u)}" target="_blank" rel="noopener">Rejoindre</a>` : esc(u);
+async function load() {
+  try {
+    const b = await api('/api/booking/' + encodeURIComponent(t));
+    const head = `<p style="font-size:1.1rem"><b>🗓 ${esc(fmtFull(b.start))}</b><br>${MODE[b.mode] || ''}</p>`;
+    const note = b.decisionMessage ? `<p><i>« ${esc(b.decisionMessage)} »</i></p>` : '';
+    $('#box').innerHTML = ({
+      pending: `<span class="badge b-pending">En attente de validation</span>${head}<p>Votre demande est bien enregistrée. Vous pouvez revenir sur cette page (gardez ce lien) pour voir la réponse.</p><button id="c" class="danger">Annuler ma demande</button>`,
+      confirmed: `<span class="badge b-confirmed">Confirmé ✔</span>${head}${note}${b.link ? `<p>${link(b.link)}</p>` : ''}${b.address ? `<p>📍 ${esc(b.address)}</p>` : ''}<a class="btn" href="/api/booking/${t}.ics">Ajouter à mon agenda</a> <button id="c" class="danger">Annuler</button>`,
+      refused: `<span class="badge">Non retenu</span>${head}${note}<p>Ce créneau n’a pas pu être confirmé. <a href="/">Choisir un autre créneau</a>.</p>`,
+      cancelled: `<span class="badge">Annulé</span>${head}`,
+    })[b.status];
+    $('#c')?.addEventListener('click', async () => { if (confirm('Annuler ce rendez-vous ?')) { await api(`/api/booking/${t}/cancel`, { method: 'POST' }); load(); } });
+  } catch (e) { $('#box').textContent = e.message; }
+}
+load();
+</script></body></html>
